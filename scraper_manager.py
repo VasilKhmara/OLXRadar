@@ -9,11 +9,11 @@ from utils import get_header
 
 
 class OlxScraper:
-    """Class used to scrape data from OLX Romania."""
+    """Class used to scrape data from OLX (Romania, Ukraine, Poland)."""
 
     def __init__(self):
         self.headers = get_header()
-        self.netloc = "www.olx.ro"
+        self.supported_domains = ["www.olx.ua", "www.olx.pl"]
         self.schema = "https"
         self.current_page = 1
         self.last_page = None
@@ -89,30 +89,46 @@ class OlxScraper:
             ValueError: If the URL is invalid or does not belong to the specified domain.
         """
         ads_links = set()
-        if self.netloc != urlparse(target_url).netloc:
+        parsed_target = urlparse(target_url)
+        target_netloc = parsed_target.netloc
+        
+        if target_netloc not in self.supported_domains:
             raise ValueError(
-                f"Bad URL! OLXRadar is configured to process {self.netloc} links only.")
+                f"Bad URL! OLXRadar is configured to process {', '.join(self.supported_domains)} links only.")
+        
+        # Reset page counter for each new scrape
+        self.current_page = 1
+        self.last_page = None
+        
+        logging.info(f"Starting scraping for target URL: {target_url}")
         while True:
+            logging.info(f"Scraping page: {self.current_page}")
             url = f"{target_url}/?page={self.current_page}"
             parsed_content = self.parse_content(url)
             self.last_page = self.get_last_page(parsed_content)
             ads = self.get_ads(parsed_content)
             if ads is None:
+                logging.info("No ads found on page.")
                 return ads_links
+            logging.info(f"Found {len(ads)} ads on page {self.current_page}")
             for ad in ads:
-                link = ad.find("a", class_="css-rc5s2u")
+                # link = ad.find("a", class_="css-rc5s2u")
+                link = ad.find("a", class_="css-1tqlkj0")
                 if link is not None and link.has_attr("href"):
                     link_href = link["href"]
-                    if not self.is_internal_url(link_href, self.netloc):
+                    if not self.is_internal_url(link_href, target_netloc):
                         continue
                     if not self.is_relevant_url(link_href):
                         continue
                     if self.is_relative_url(link_href):
-                        link_href = f"{self.schema}://{self.netloc}{link_href}"
+                        link_href = f"{self.schema}://{target_netloc}{link_href}"
+                    logging.info(f"Found valid ad link: {link_href}")
                     ads_links.add(link_href)
             if self.last_page is None or self.current_page >= self.last_page:
+                logging.info("Reached last page or no pagination.")
                 break
             self.current_page += 1
+        logging.info(f"Finished scraping. Total unique ads found: {len(ads_links)}")
         return ads_links
 
     def is_relevant_url(self, url: str) -> bool:
@@ -150,7 +166,8 @@ class OlxScraper:
         if self.is_relative_url(url):
             return True
         parsed_url = urlparse(url)
-        if parsed_url.netloc == domain:
+        # Check if URL belongs to any supported domain
+        if parsed_url.netloc in self.supported_domains:
             return True
         return False
 
@@ -190,22 +207,35 @@ class OlxScraper:
             return None
 
         title = None
-        if content.find("h1", class_="css-1soizd2"):
+        if content.find("h4", class_="css-1au435n"):
+        # if content.find("h1", class_="css-1soizd2"):
             title = content.find(
-                "h1", class_="css-1soizd2").get_text(strip=True)
+                # "h1", class_="css-1soizd2").get_text(strip=True)
+                "h4", class_="css-1au435n").get_text(strip=True)
         price = None
-        if content.find("h3", class_="css-ddweki"):
+        # if content.find("h3", class_="css-ddweki"):
+        if content.find("h3", class_="css-yauxmy"):
             price = content.find(
-                "h3", class_="css-ddweki").get_text(strip=True)
+                # "h3", class_="css-ddweki").get_text(strip=True)
+                "h3", class_="css-yauxmy").get_text(strip=True)
         description = None
-        if content.find("div", class_="css-bgzo2k"):
+        # if content.find("div", class_="css-bgzo2k"):
+        if content.find("div", class_="css-19duwlz"):
             description = content.find(
-                "div", class_="css-bgzo2k").get_text(strip=True, separator="\n")
+                # "div", class_="css-bgzo2k").get_text(strip=True, separator="\n")
+                "div", class_="css-19duwlz").get_text(strip=True, separator="\n")
         seller = None
-        if content.find("h4", class_="css-1lcz6o7"):
+        # if content.find("h4", class_="css-1lcz6o7"):
+        if content.find("h4", class_="css-14tb3q5"):
             seller = content.find(
-                "h4", class_="css-1lcz6o7").get_text(strip=True)
+                # "h4", class_="css-1lcz6o7").get_text(strip=True)
+                "h4", class_="css-14tb3q5").get_text(strip=True)
         if any(item is None for item in [title, price, description]):
+            missing = []
+            if title is None: missing.append("title")
+            if price is None: missing.append("price")
+            if description is None: missing.append("description")
+            logging.warning(f"Missing required data for {ad_url}: {', '.join(missing)}")
             return None
         ad_data = {
             "title": title,
@@ -213,4 +243,5 @@ class OlxScraper:
             "url": ad_url,
             "description": description
         }
+        logging.info(f"Successfully extracted data for {ad_url}")
         return ad_data
