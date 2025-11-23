@@ -8,7 +8,7 @@ from utils import BASE_DIR
 
 log_file_path = os.path.join(BASE_DIR, "log.log")
 logging.basicConfig(
-    level=logging.ERROR,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.FileHandler(log_file_path),
