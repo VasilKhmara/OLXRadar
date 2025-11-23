@@ -3,6 +3,7 @@ import ssl
 import smtplib
 import requests
 import logging
+import re
 from dotenv import load_dotenv
 from utils import normalize_text, extract_search_term
 import logging_config
@@ -39,61 +40,57 @@ class Messenger():
         return f"{index}. {title} ({price})\n{description}...\n{url}\n\n"
 
     @staticmethod
-    def generate_email_content(target_url: str, new_ads: list) -> tuple[str, str]:
+    def generate_single_ad_notification(ad: dict) -> tuple[str, str]:
         """
-        Generates the subject and the body of an email containing new ads.
+        Generates a formatted notification for a single ad.
 
-        Params:
-            target_url (str): URL of the page where the ads were found.
-            new_ads (List[Dict]): A list of dictionaries containing details about
-            the new ads - title, description, price and URL.
+        Args:
+            ad (dict): A dictionary containing details about the ad.
 
         Returns:
-            Tuple[str, str]: A tuple containing the subject and the body of the email.
-
+            tuple[str, str]: A tuple containing (subject, message_body)
         """
-        email_body_elements = []
-        for index, new_ad_details in enumerate(new_ads, start=1):
-            ad_string = Messenger.generate_ad_string(index, new_ad_details)
-            email_body_elements.append(ad_string)
-
-        search_term = extract_search_term(target_url)
-        # Set custom notification string below
-        email_subject = f"OLXRadar: {len(new_ads)} new ads"
-        if search_term is not None:
-            email_subject += f" for the term '{search_term.title()}'"
-        email_body = "\n".join(email_body_elements)
-        return email_subject, email_body
-
-    @staticmethod
-    def send_email_message(subject: str, message: str) -> None:
-        """
-        Send the recipient an email with the given subject and message.
-
-        Params:
-            Subject (str): Subject of the email.
-            message (str): Body of the message.
-
-        Returns:
-            None
-
-        Raises:
-            SMTPAuthenticationError: If the authentication data is incorrect.
-            SMTPException: If an error occurs while sending the email.
-        """
-        try:
-            subject = str(subject)
-            message = str(message)
-            message = f"""Subject: {subject}\n\n{message}"""
-            message = normalize_text(message)
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL("smtp.gmail.com", port=465, context=context) as server:
-                server.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
-                server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, message)
-                server.quit()
-        except (smtplib.SMTPAuthenticationError, smtplib.SMTPException) as error:
-            logging.error(f"Error sending email notification: {error}")
-        logging.info("Email notification sent successfully")
+        # Don't normalize text - Telegram supports Unicode perfectly fine
+        # Just clean up whitespace and preserve original characters
+        title = str(ad.get("title", "N/A")).strip()
+        price = str(ad.get("price", "N/A")).strip()
+        url = ad.get("url", "N/A")
+        description = str(ad.get("description", "N/A")).strip()
+        seller = str(ad.get("seller", "")).strip() if ad.get("seller") else None
+        
+        # Clean up excessive whitespace in description
+        if description != "N/A":
+            description = re.sub(r'\s+', ' ', description)  # Replace multiple spaces with single space
+            description = re.sub(r'\n\s*\n', '\n\n', description)  # Clean up excessive newlines
+        
+        # Truncate description if too long (keep it reasonable for Telegram)
+        max_desc_length = 400
+        if description != "N/A" and len(description) > max_desc_length:
+            description = description[:max_desc_length] + "..."
+        
+        # Create a nicely formatted message
+        message_lines = [
+            "",
+            f"📌 {title}",
+            f"💰 {price}",
+            ""
+        ]
+        
+        if seller:
+            message_lines.append(f"👤 Seller: {seller}")
+            message_lines.append("")
+        
+        if description != "N/A":
+            message_lines.append("📝 Description:")
+            message_lines.append(description)
+            message_lines.append("")
+        
+        message_lines.append(f"🔗 {url}")
+        
+        message_body = "\n".join(message_lines)
+        subject = f"New: {title[:50]}{'...' if len(title) > 50 else ''}"
+        
+        return subject, message_body
 
     @staticmethod
     def send_telegram_message(message_subject: str, message_body: str) -> None:
