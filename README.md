@@ -40,52 +40,10 @@ Before running the app, you must have the following installed:
       [👉 detailed instructions on how to get the bot token and chat ID](https://12ft.io/proxy?q=https%3A%2F%2Fmedium.com%2Fcodex%2Fusing-python-to-send-telegram-messages-in-3-simple-steps-419a8b5e5e2)
 
 
-7. Setup your Gmail app password:
-   1. Go to [Google Account Security](https://myaccount.google.com/security).
-   2. Select **Two Step Verification** and click **App Password**.
-   3. Select **Mail** and **Other (custom name)**.
-   4. Enter a name for the app password, such as "OLXRadar".
-   5. Copy the generated password.
-   6. Add the following lines to the `.env` file:
-      ```
-      EMAIL_SENDER="your_sender_email_here@gmail.com"
-      EMAIL_RECEIVER="your_receiver_email_here@domain.com"
-      EMAIL_APP_PASSWORD="your_app_password"
-      ```
-8. Add a product URL to monitor:
+
+7. Add a product URL to monitor:
    1. Search for a product on [www.olx.ro](https://www.olx.ro/).
    2. Copy the URL of the search results page.
    3. Add the URL to `target_urls.txt`, located in the project directory. Add one URL per line.
 
 ![How to get a search url](https://i.imgur.com/9tEANnp.png)
-
-## Usage. How to schedule the app to run at fixed intervals
-
-**On Windows**
-
-Make sure you logged on as an administrator or you have the same access as an administrator, then go to:
-
-```
-Start -> Control Panel -> System and Security -> Administrative Tools -> Task Scheduler
-Action -> Create Basic Task -> Type a name and Click Next
-```    
-Follow through the wizard.
-
-
-**On Linux**
-   
-   1. Open the crontab configuration file by running the following command:
-      ```
-      crontab -e
-      ```
-   2. Add the following line to the end of the file to run the app every 30 minutes:
-      ```
-      */30 * * * * /path/to/OLXRadar/venv/bin/python /path/to/OLXRadar/main.py
-      ```
-      Replace `/path/to/OLXRadar` with the actual path to the project directory.
-
-The app will fetch the list of URLs to monitor from `target_urls.txt`, scrape new ads, and send alerts via email and Telegram.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
