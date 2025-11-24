@@ -1,0 +1,16 @@
+services:
+  olx-radar:
+    build: .
+    container_name: olx-radar
+    restart: unless-stopped
+    # Load environment variables from .env file
+    env_file:
+      - .env
+    # Mount files to persist data and allow easy configuration editing
+    volumes:
+      - ./database.db:/app/database.db
+      - ./log.log:/app/log.log
+      - ./target_urls.txt:/app/target_urls.txt
+    # Optional: Override default command to change interval (e.g., 30 minutes)
+    # command: python main.py --interval 30
+
