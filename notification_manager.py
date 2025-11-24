@@ -1,18 +1,13 @@
 import os
-import ssl
-import smtplib
 import requests
 import logging
 import re
 from dotenv import load_dotenv
-from utils import normalize_text, extract_search_term
-import logging_config
+from utils import normalize_text
+import time
 
 load_dotenv()
 
-EMAIL_SENDER = os.getenv("EMAIL_SENDER")
-EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD")
-EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -137,7 +132,8 @@ class Messenger():
                 response = requests.get(endpoint, params=params)
                 response.raise_for_status()
                 if response.json()["ok"]:
-                    logging.info("Email notification sent successfully")
+                    logging.info("Telegram notification sent successfully")
+                    time.sleep(1)
                 else:
                     logging.error(
                         "Error sending Telegram notification")
