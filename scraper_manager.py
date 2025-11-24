@@ -122,7 +122,6 @@ class OlxScraper:
                         continue
                     if self.is_relative_url(link_href):
                         link_href = f"{self.schema}://{target_netloc}{link_href}"
-                    logging.info(f"Found valid ad link: {link_href}")
                     ads_links.add(link_href)
             if self.last_page is None or self.current_page >= self.last_page:
                 logging.info("Reached last page or no pagination.")
