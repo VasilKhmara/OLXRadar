@@ -229,6 +229,13 @@ class OlxScraper:
             seller = content.find(
                 # "h4", class_="css-1lcz6o7").get_text(strip=True)
                 "h4", class_="css-14tb3q5").get_text(strip=True)
+        
+        images = []
+        image_tags = content.find_all("img", {"data-testid": re.compile(r"swiper-image")})
+        for image_tag in image_tags:
+            if image_tag.has_attr("src"):
+                images.append(image_tag["src"])
+
         if any(item is None for item in [title, price, description]):
             missing = []
             if title is None: missing.append("title")
@@ -240,7 +247,8 @@ class OlxScraper:
             "title": title,
             "price": price,
             "url": ad_url,
-            "description": description
+            "description": description,
+            "images": images
         }
         logging.info(f"Successfully extracted data for {ad_url}")
         return ad_data

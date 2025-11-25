@@ -1,3 +1,4 @@
+import json
 import os
 import requests
 import logging
@@ -81,11 +82,68 @@ class Messenger():
             message_lines.append("")
         
         message_lines.append(f"🔗 {url}")
+
+        images = ad.get("images", [])
+        if images:
+            message_lines.append("")
+            message_lines.append(f"👇 {len(images)} photos attached below 👇")
         
         message_body = "\n".join(message_lines)
         subject = f"New: {title[:50]}{'...' if len(title) > 50 else ''}"
         
         return subject, message_body
+
+    @staticmethod
+    def send_telegram_photos(images: list[str]) -> None:
+        """
+        Send images via Telegram.
+
+        Args:
+            images (list[str]): List of image URLs to send.
+        """
+        if not images:
+            return
+
+        endpoint = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMediaGroup"
+        
+        # Telegram allows up to 10 media items per group
+        # We will slice the list into chunks of 10
+        for i in range(0, len(images), 10):
+            chunk = images[i:i+10]
+            media_group = []
+            for img_url in chunk:
+                media_group.append({
+                    "type": "photo",
+                    "media": img_url
+                })
+            
+            try:
+                # Using post for complex data
+                response = requests.post(endpoint, data={"chat_id": TELEGRAM_CHAT_ID, "media": json.dumps(media_group)})
+                
+                # If sendMediaGroup fails (e.g. invalid URL), try sending individually
+                if not response.ok:
+                    logging.warning(f"Failed to send media group: {response.text}. Trying individual photos.")
+                    Messenger._send_individual_photos(chunk)
+                else:
+                    logging.info("Telegram media group sent successfully")
+                    
+            except requests.exceptions.RequestException as error:
+                logging.error(f"Telegram connection error while sending photos: {error}")
+
+    @staticmethod
+    def _send_individual_photos(images: list[str]) -> None:
+        """Fallback to send photos one by one."""
+        endpoint = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+        for img_url in images:
+            try:
+                params = {
+                    "chat_id": TELEGRAM_CHAT_ID,
+                    "photo": img_url
+                }
+                requests.get(endpoint, params=params)
+            except Exception as e:
+                logging.error(f"Failed to send individual photo {img_url}: {e}")
 
     @staticmethod
     def send_telegram_message(message_subject: str, message_body: str) -> None:

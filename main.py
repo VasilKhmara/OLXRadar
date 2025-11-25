@@ -136,6 +136,13 @@ def main() -> None:
                         try:
                             message_subject, message_body = Messenger.generate_single_ad_notification(ad)
                             Messenger.send_telegram_message(message_subject, message_body)
+                            
+                            # Send images if available
+                            images = ad.get('images')
+                            if images:
+                                Messenger.send_telegram_photos(images)
+                                logging.info(f"Photos sent for ad #{idx}")
+                                
                             logging.info(f"Notification sent for ad #{idx}: {ad.get('title', 'N/A')[:50]}")
                         except Exception as e:
                             logging.error(f"Failed to send notification for ad #{idx}: {e}")
