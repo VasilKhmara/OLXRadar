@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import logging_config  # noqa: F401  # ensure logging config is loaded
 import re
+import threading
+import time
 from typing import Callable, Dict, List, Sequence
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -14,14 +16,17 @@ from utils import get_header
 
 
 class OlxScraper(MarketplaceScraper):
-    """Scraper for OLX marketplaces (Romania, Ukraine, Poland)."""
+    """Scraper for OLX marketplaces (Ukraine, Poland)."""
 
     name = "olx"
-    supported_domains = ("www.olx.ua", "www.olx.pl", "www.olx.ro")
+    supported_domains = ("www.olx.ua", "www.olx.pl")
 
-    def __init__(self) -> None:
+    def __init__(self, user_agent: str | None = None) -> None:
         self.headers = get_header()
+        if user_agent:
+            self.headers["User-Agent"] = user_agent
         self.schema = "https"
+        self._session_local = threading.local()
 
     def collect_listings(
         self,
@@ -164,13 +169,75 @@ class OlxScraper(MarketplaceScraper):
         return ad_data
 
     def _parse_content(self, target_url: str) -> BeautifulSoup | None:
-        try:
-            response = requests.get(target_url, headers=self.headers, timeout=60)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as error:
-            logging.error(f"Connection error: {error}")
+        response = self._fetch_with_retries(target_url)
+        if response is None:
+            logging.error(f"[{self.name}] Unable to fetch {target_url} after retries.")
             return None
         return BeautifulSoup(response.text, "html.parser")
+
+    def _fetch_with_retries(self, target_url: str) -> requests.Response | None:
+        delays = (0, 1, 2, 4)
+        session = self._get_session()
+        last_error: Exception | None = None
+
+        for attempt, delay in enumerate(delays, start=1):
+            if delay:
+                logging.debug(
+                    f"[{self.name}] Sleeping {delay}s before retry #{attempt} for {target_url}"
+                )
+                time.sleep(delay)
+
+            try:
+                logging.debug(
+                    f"[{self.name}] Requesting {target_url} "
+                    f"(attempt {attempt}/{len(delays)})"
+                )
+                response = session.get(target_url, timeout=60)
+            except requests.exceptions.RequestException as exc:
+                last_error = exc
+                logging.debug(f"[{self.name}] Request exception for {target_url}: {exc}")
+                continue
+
+            if response.status_code in (403, 429):
+                last_error = requests.exceptions.HTTPError(
+                    f"{response.status_code} {response.reason}"
+                )
+                logging.warning(
+                    f"[{self.name}] Received {response.status_code} for {target_url} "
+                    f"on attempt {attempt}/{len(delays)}."
+                )
+                if attempt == len(delays):
+                    break
+                continue
+
+            try:
+                response.raise_for_status()
+            except requests.HTTPError as exc:
+                last_error = exc
+                logging.debug(f"[{self.name}] HTTP error for {target_url}: {exc}")
+                continue
+
+            logging.debug(
+                f"[{self.name}] Successfully fetched {target_url} "
+                f"(bytes={len(response.text)})"
+            )
+            return response
+
+        logging.error(
+            f"[{self.name}] Exhausted retries for {target_url}. Last error: {last_error}"
+        )
+        return None
+
+    def _get_session(self) -> requests.Session:
+        session = getattr(self._session_local, "session", None)
+        if session is None:
+            session = requests.Session()
+            session.headers.update(self.headers)
+            logging.debug(
+                f"[{self.name}] Initialized new HTTP session with headers {self.headers}"
+            )
+            self._session_local.session = session
+        return session
 
     def _get_ads(self, parsed_content: BeautifulSoup | None) -> ResultSet[Tag] | None:
         if parsed_content is None:

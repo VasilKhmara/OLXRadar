@@ -4,6 +4,7 @@ import logging
 import logging_config  # noqa: F401
 import re
 import threading
+import time
 from typing import Any, Callable, Dict, List
 from urllib.parse import urlparse
 
@@ -14,6 +15,7 @@ from utils import get_header
 
 try:  # pragma: no cover - optional dependency
     from pyVinted import Vinted  # type: ignore
+    from pyVinted.requester import requester as vinted_requester  # type: ignore
 except ImportError as exc:  # pragma: no cover
     raise ImportError("pyVinted is required for Vinted scraping. Install it via `pip install pyVinted`.") from exc
 
@@ -22,11 +24,19 @@ class VintedScraper(MarketplaceScraper):
     """Scraper implementation backed by the pyVinted client."""
 
     name = "vinted"
-    max_allowed_page_size = 96
-    max_allowed_pages = 32
+    max_allowed_page_size = 20
+    max_allowed_pages = 10
 
-    def __init__(self, page_size: int = 96, max_pages: int = 32) -> None:
+    def __init__(
+        self,
+        page_size: int = 20,
+        max_pages: int = 10,
+        user_agent: str | None = None
+    ) -> None:
         self.client = Vinted()
+        self.user_agent = user_agent
+        if user_agent:
+            vinted_requester.session.headers.update({"User-Agent": user_agent})
         self.page_size = min(max(1, page_size), self.max_allowed_page_size)
         self.max_pages = min(max(1, max_pages), self.max_allowed_pages)
         self._html_session_local = threading.local()
@@ -52,8 +62,10 @@ class VintedScraper(MarketplaceScraper):
         logging.info(f"[{self.name}] Starting scrape for {target_url}")
         while page <= max_pages:
             try:
-                logging.debug(f"[{self.name}] Fetching page {page} (size={page_size}) for {target_url}")
-                items = self.client.items.search(target_url, page_size, page)
+                logging.debug(
+                    f"[{self.name}] Fetching page {page} (size={page_size}) for {target_url}"
+                )
+                items = self._search_with_retries(target_url, page_size, page)
             except Exception as exc:  # pragma: no cover
                 logging.error(f"[{self.name}] Failed to fetch page {page} for {target_url}: {exc}")
                 break
@@ -233,26 +245,119 @@ class VintedScraper(MarketplaceScraper):
         )
         return html_data
 
+    def _search_with_retries(self, target_url: str, page_size: int, page: int) -> List[Any]:
+        delays = (0, 1, 2, 4)
+        last_error: Exception | None = None
+
+        for attempt, delay in enumerate(delays, start=1):
+            if delay:
+                logging.debug(
+                    f"[{self.name}] Sleeping {delay}s before search retry #{attempt} "
+                    f"for {target_url}"
+                )
+                time.sleep(delay)
+            try:
+                logging.debug(
+                    f"[{self.name}] Calling pyVinted search attempt {attempt}/{len(delays)} "
+                    f"for {target_url}"
+                )
+                return self.client.items.search(target_url, page_size, page)
+            except Exception as exc:
+                last_error = exc
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                if status_code in (401, 403, 429):
+                    logging.warning(
+                        f"[{self.name}] pyVinted search returned {status_code} for {target_url} "
+                        f"(attempt {attempt}/{len(delays)})"
+                    )
+                    self._refresh_vinted_cookies(target_url)
+                    if attempt == len(delays):
+                        break
+                    continue
+                logging.error(f"[{self.name}] pyVinted search failed for {target_url}: {exc}")
+                break
+
+        if last_error:
+            logging.error(
+                f"[{self.name}] Exhausted pyVinted search retries for {target_url}: {last_error}"
+            )
+        return []
+
+    def _refresh_vinted_cookies(self, target_url: str) -> None:
+        domain = urlparse(target_url).netloc or "www.vinted.com"
+        refreshed = False
+        if vinted_requester:
+            try:
+                vinted_requester.setLocale(domain)
+                vinted_requester.setCookies()
+                refreshed = True
+                logging.debug(f"[{self.name}] Refreshed pyVinted cookies for {domain}")
+            except Exception as exc:  # pragma: no cover
+                logging.debug(f"[{self.name}] pyVinted cookie refresh failed: {exc}")
+        if refreshed:
+            return
+        session = self._get_html_session()
+        base_url = f"https://{domain}/"
+        try:
+            logging.debug(f"[{self.name}] Warming cookies via HEAD {base_url}")
+            session.head(base_url, timeout=10)
+        except requests.RequestException as exc:  # pragma: no cover
+            logging.debug(f"[{self.name}] Cookie warm-up failed for {base_url}: {exc}")
+
     def _fetch_item_soup(self, item_url: str) -> BeautifulSoup | None:
         session = self._get_html_session()
-        try:
-            logging.debug(f"[{self.name}] Fetching HTML for {item_url}")
-            response = session.get(item_url, timeout=15)
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            logging.debug(f"[{self.name}] HTML fetch failed for {item_url}: {exc}")
-            return None
+        delays = (0, 1, 2, 4)
+        last_error: Exception | None = None
+        for attempt, delay in enumerate(delays, start=1):
+            if delay:
+                logging.debug(f"[{self.name}] Sleeping {delay}s before HTML retry #{attempt} for {item_url}")
+                time.sleep(delay)
+            try:
+                logging.debug(f"[{self.name}] Fetching HTML for {item_url} (attempt {attempt}/{len(delays)})")
+                response = session.get(item_url, timeout=15)
+            except requests.RequestException as exc:
+                last_error = exc
+                logging.debug(f"[{self.name}] HTML fetch exception for {item_url}: {exc}")
+                continue
+
+            if response.status_code == 429:
+                last_error = requests.HTTPError("429 Too Many Requests")
+                logging.debug(
+                    f"[{self.name}] HTML fetch hit 429 for {item_url} on attempt {attempt}. "
+                    "Will retry with backoff." if attempt < len(delays) else
+                    f"[{self.name}] HTML fetch hit 429 for {item_url} on final attempt."
+                )
+                if attempt == len(delays):
+                    break
+                continue
+
+            try:
+                response.raise_for_status()
+            except requests.HTTPError as exc:
+                last_error = exc
+                logging.debug(f"[{self.name}] HTML fetch failed for {item_url}: {exc}")
+                continue
+
+            logging.debug(
+                f"[{self.name}] HTML fetch succeeded for {item_url} "
+                f"(bytes={len(response.text)})"
+            )
+            return BeautifulSoup(response.text, "html.parser")
+
         logging.debug(
-            f"[{self.name}] HTML fetch succeeded for {item_url} "
-            f"(bytes={len(response.text)})"
+            f"[{self.name}] HTML fetch exhausted retries for {item_url}. "
+            f"Last error: {last_error}"
         )
-        return BeautifulSoup(response.text, "html.parser")
+        return None
 
     def _get_html_session(self) -> requests.Session:
         session = getattr(self._html_session_local, "session", None)
         if session is None:
             session = requests.Session()
-            session.headers.update(get_header())
+            headers = get_header()
+            if self.user_agent:
+                headers["User-Agent"] = self.user_agent
+            session.headers.update(headers)
             logging.debug(f"[{self.name}] Initialized new HTML session with headers {session.headers}")
             self._html_session_local.session = session
         return session

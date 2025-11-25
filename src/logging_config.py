@@ -37,6 +37,6 @@ stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(formatter)
 
 logging.basicConfig(
-    level=logging.DEBUG,  # default to DEBUG so we can see detailed scraper traces
+    level=logging.INFO,  # default to INFO so we can see only important messages
     handlers=[file_handler, stream_handler],
 )

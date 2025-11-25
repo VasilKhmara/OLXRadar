@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import os
 import logging
 import logging_config
+import os
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
@@ -52,13 +53,14 @@ class ScraperOrchestrator:
         self.target_urls_path = target_urls_path or TARGET_URLS_PATH
         self.listing_workers = max(1, listing_workers)
         self.detail_workers = max(1, detail_workers)
+        self.user_agent = self._generate_user_agent()
         if scrapers is not None:
             self.scrapers = scrapers
         else:
-            default_scrapers: List[MarketplaceScraper] = [OlxScraper()]
+            default_scrapers: List[MarketplaceScraper] = [OlxScraper(user_agent=self.user_agent)]
             if VintedScraper is not None:
                 try:
-                    default_scrapers.append(VintedScraper())
+                    default_scrapers.append(VintedScraper(user_agent=self.user_agent))
                 except Exception as exc:
                     logging.warning(f"Failed to initialize Vinted scraper: {exc}")
             self.scrapers = default_scrapers
@@ -66,6 +68,21 @@ class ScraperOrchestrator:
     def register_scraper(self, scraper: MarketplaceScraper) -> None:
         """Register an additional marketplace scraper at runtime."""
         self.scrapers.append(scraper)
+    def _generate_user_agent(self) -> str:
+        base = "Mozilla/5.0"
+        platform = random.choice(
+            [
+                "(Windows NT 10.0; Win64; x64)",
+                "(Macintosh; Intel Mac OS X 10_15_7)",
+                "(X11; Linux x86_64)",
+            ]
+        )
+        engine = "AppleWebKit/537.36 (KHTML, like Gecko)"
+        chrome_version = f"Chrome/{random.randint(90, 118)}.0.{random.randint(1000, 5999)}.{random.randint(10, 99)}"
+        safari_version = "Safari/537.36"
+        ua = f"{base} {platform} {engine} {chrome_version} {safari_version}"
+        logging.debug(f"[orchestrator] Generated UA: {ua}")
+        return ua
 
     def collect_new_ads(self, target_urls: List[str] | None = None) -> List[dict[str]]:
         """
@@ -80,7 +97,6 @@ class ScraperOrchestrator:
             logging.info("No target URLs configured. Update target_urls.txt to start monitoring.")
             return []
 
-        logging.info(f"Preparing to scrape {len(target_specs)} targets across {len(self.scrapers)} scrapers.")
         new_listing_jobs = self._gather_new_listing_jobs(target_specs)
         if not new_listing_jobs:
             logging.info("No new listings detected in this cycle.")
