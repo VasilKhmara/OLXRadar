@@ -14,6 +14,6 @@ RUN touch log.log
 
 # Run the application
 # You can override the interval using CMD in docker-compose or docker run
-# e.g., CMD ["python", "main.py", "--interval", "30"]
-CMD ["python", "main.py"]
+# e.g., CMD ["python", "src/main.py", "--interval", "30"]
+CMD ["python", "src/main.py"]
 
