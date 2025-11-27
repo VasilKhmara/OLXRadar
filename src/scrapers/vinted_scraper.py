@@ -265,7 +265,13 @@ class VintedScraper(MarketplaceScraper):
             except Exception as exc:
                 last_error = exc
                 status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                if status_code in (401, 403, 429):
+                if status_code == 403:
+                    logging.error(
+                        f"[{self.name}] pyVinted search returned 403 for {target_url}; "
+                        "skipping further retries."
+                    )
+                    break
+                if status_code in (401, 429):
                     logging.warning(
                         f"[{self.name}] pyVinted search returned {status_code} for {target_url} "
                         f"(attempt {attempt}/{len(delays)})"
