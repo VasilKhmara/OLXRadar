@@ -215,7 +215,7 @@ class ScraperOrchestrator:
         if "vinted" in domain and not any(scraper.name == "vinted" for scraper in self.scrapers):
             logging.warning(
                 "Vinted URL detected but no Vinted scraper is registered. "
-                "Install pyVinted (pip install pyVinted) or register a custom scraper."
+                "Install vinted-api-wrapper (pip install vinted-api-wrapper) or register a custom scraper."
             )
             return None
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
+from json import JSONDecodeError
 import logging
 import logging_config  # noqa: F401
 import re
@@ -14,18 +16,80 @@ from scrapers.base import ListingCandidate, MarketplaceScraper
 from utils import get_header
 
 try:  # pragma: no cover - optional dependency
-    from pyVinted import Vinted  # type: ignore
-    from pyVinted.requester import requester as vinted_requester  # type: ignore
+    from dacite import from_dict  # type: ignore
+    from vinted import Vinted  # type: ignore
+    from vinted.endpoints import Endpoints  # type: ignore
+    from vinted.exceptions import RateLimitExceededException  # type: ignore
+    from vinted.models.base import VintedResponse  # type: ignore
+    from vinted.vinted import logger as vinted_logger  # type: ignore
 except ImportError as exc:  # pragma: no cover
-    raise ImportError("pyVinted is required for Vinted scraping. Install it via `pip install pyVinted`.") from exc
+    raise ImportError(
+        "vinted-api-wrapper is required for Vinted scraping. Install it via "
+        "`pip install vinted-api-wrapper`."
+    ) from exc
+
+
+class SafeVinted(Vinted):
+    def _get(
+        self,
+        endpoint: Endpoints,
+        response_model: VintedResponse,
+        format_values=None,
+        wanted_status_code: int = 200,
+        *args,
+        **kwargs,
+    ):
+        vinted_logger.debug(
+            f"GET request to endpoint: {endpoint.value}, format_values: {format_values}, "
+            f"expected status: {wanted_status_code}"
+        )
+
+        if format_values:
+            url = self.api_url + endpoint.value.format(format_values)
+            vinted_logger.debug(f"Formatted endpoint URL: {url}")
+        else:
+            url = self.api_url + endpoint.value
+            vinted_logger.debug(f"Standard endpoint URL: {url}")
+
+        response = self._call(method="get", url=url, *args, **kwargs)
+
+        if response.status_code != wanted_status_code and not kwargs.get("recursive"):
+            vinted_logger.info(
+                f"Status code {response.status_code} != expected {wanted_status_code}, "
+                "refreshing cookies and retrying"
+            )
+            self.fetch_cookies()
+            return self._get(
+                endpoint=endpoint,
+                response_model=response_model,
+                format_values=format_values,
+                wanted_status_code=wanted_status_code,
+                recursive=True,
+                *args,
+                **kwargs,
+            )
+
+        try:
+            json_response = response.json()
+            vinted_logger.debug(f"Successfully parsed JSON response from {endpoint.value}")
+            result = from_dict(response_model, json_response)
+            vinted_logger.info(f"Successfully converted response to {response_model.__name__}")
+            return result
+        except Exception as exc:
+            vinted_logger.warning(
+                "Failed to parse JSON response "
+                f"from {endpoint.value}: {exc}. Response body begin: {response.text[:512]!r}"
+            )
+            raise
 
 
 class VintedScraper(MarketplaceScraper):
-    """Scraper implementation backed by the pyVinted client."""
+    """Scraper implementation backed by the vinted-api-wrapper client."""
 
     name = "vinted"
     max_allowed_page_size = 20
     max_allowed_pages = 10
+
 
     def __init__(
         self,
@@ -33,10 +97,8 @@ class VintedScraper(MarketplaceScraper):
         max_pages: int = 10,
         user_agent: str | None = None
     ) -> None:
-        self.client = Vinted()
+        self._clients: dict[str, SafeVinted] = {}
         self.user_agent = user_agent
-        if user_agent:
-            vinted_requester.session.headers.update({"User-Agent": user_agent})
         self.page_size = min(max(1, page_size), self.max_allowed_page_size)
         self.max_pages = min(max(1, max_pages), self.max_allowed_pages)
         self._html_session_local = threading.local()
@@ -198,15 +260,21 @@ class VintedScraper(MarketplaceScraper):
         parsed = urlparse(ad_url)
         scheme = parsed.scheme or "https"
         domain = parsed.netloc or "www.vinted.com"
+        item_id = self._extract_item_id(ad_url)
+        if item_id is None:
+            logging.debug(f"[{self.name}] Unable to derive item id from {ad_url} for API fallback")
+            return None
+        client = self._get_client_for_target_url(ad_url)
         try:
-            items = self.client.items.search(ad_url, 1, 1)
+            response = client.item_info(item_id)
         except Exception as exc:  # pragma: no cover
             logging.error(f"[{self.name}] API fallback failed for {ad_url}: {exc}")
             return None
-        if not items:
-            logging.debug(f"[{self.name}] API fallback returned no items for {ad_url}")
+        item = getattr(response, "item", None)
+        if not item:
+            logging.debug(f"[{self.name}] API fallback returned no data for {ad_url}")
             return None
-        return self._build_ad_from_item(items[0], scheme, domain)
+        return self._build_ad_from_item(item, scheme, domain)
 
     def _scrape_item_from_html(self, item_url: str) -> dict | None:
         soup = self._fetch_item_soup(item_url)
@@ -248,6 +316,7 @@ class VintedScraper(MarketplaceScraper):
     def _search_with_retries(self, target_url: str, page_size: int, page: int) -> List[Any]:
         delays = (0, 1, 2, 4)
         last_error: Exception | None = None
+        client = self._get_client_for_target_url(target_url)
 
         for attempt, delay in enumerate(delays, start=1):
             if delay:
@@ -258,50 +327,66 @@ class VintedScraper(MarketplaceScraper):
                 time.sleep(delay)
             try:
                 logging.debug(
-                    f"[{self.name}] Calling pyVinted search attempt {attempt}/{len(delays)} "
+                    f"[{self.name}] Calling vinted-api-wrapper search attempt {attempt}/{len(delays)} "
                     f"for {target_url}"
                 )
-                return self.client.items.search(target_url, page_size, page)
+                response = client.search(url=target_url, page=page, per_page=page_size)
             except Exception as exc:
                 last_error = exc
                 status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                is_rate_limit = isinstance(exc, RateLimitExceededException) or status_code == 429
+                is_json_error = isinstance(exc, JSONDecodeError)
                 if status_code == 403:
                     logging.error(
-                        f"[{self.name}] pyVinted search returned 403 for {target_url}; "
+                        f"[{self.name}] vinted-api-wrapper search returned 403 for {target_url}; "
                         "skipping further retries."
                     )
                     break
-                if status_code in (401, 429):
-                    logging.warning(
-                        f"[{self.name}] pyVinted search returned {status_code} for {target_url} "
-                        f"(attempt {attempt}/{len(delays)})"
+                if is_rate_limit or status_code in (401,) or is_json_error:
+                    message = (
+                        f"[{self.name}] vinted-api-wrapper search returned "
+                        f"{status_code or 'rate limit'} for {target_url}"
                     )
+                    if is_json_error:
+                        message += " (invalid JSON response)"
+                    logging.warning(f"{message} (attempt {attempt}/{len(delays)})")
                     self._refresh_vinted_cookies(target_url)
                     if attempt == len(delays):
                         break
                     continue
-                logging.error(f"[{self.name}] pyVinted search failed for {target_url}: {exc}")
+                logging.error(f"[{self.name}] vinted-api-wrapper search failed for {target_url}: {exc}")
                 break
+            else:
+                items = getattr(response, "items", None)
+                if not isinstance(items, list) or callable(items):
+                    if isinstance(response, dict):
+                        items = response.get("items")
+                    if not isinstance(items, list):
+                        logging.error(
+                            f"[{self.name}] Unexpected search payload received from vinted-api-wrapper: "
+                            f"{type(response).__name__}"
+                        )
+                        return []
+                if not items:
+                    logging.debug(f"[{self.name}] Search result returned no items for {target_url}")
+                    return []
+                return items
 
         if last_error:
             logging.error(
-                f"[{self.name}] Exhausted pyVinted search retries for {target_url}: {last_error}"
+                f"[{self.name}] Exhausted vinted-api-wrapper search retries for {target_url}: {last_error}"
             )
         return []
 
     def _refresh_vinted_cookies(self, target_url: str) -> None:
         domain = urlparse(target_url).netloc or "www.vinted.com"
-        refreshed = False
-        if vinted_requester:
-            try:
-                vinted_requester.setLocale(domain)
-                vinted_requester.setCookies()
-                refreshed = True
-                logging.debug(f"[{self.name}] Refreshed pyVinted cookies for {domain}")
-            except Exception as exc:  # pragma: no cover
-                logging.debug(f"[{self.name}] pyVinted cookie refresh failed: {exc}")
-        if refreshed:
+        client = self._get_client_for_target_url(target_url)
+        try:
+            client.update_cookies()
+            logging.debug(f"[{self.name}] Refreshed vinted-api-wrapper cookies for {domain}")
             return
+        except Exception as exc:  # pragma: no cover
+            logging.debug(f"[{self.name}] vinted-api-wrapper cookie refresh failed: {exc}")
         session = self._get_html_session()
         base_url = f"https://{domain}/"
         try:
@@ -515,6 +600,8 @@ class VintedScraper(MarketplaceScraper):
             return None
         if isinstance(item, dict):
             return dict(item)
+        if is_dataclass(item):
+            return asdict(item)
 
         payload: dict = {}
         raw_data = getattr(item, "raw_data", None)
@@ -611,4 +698,33 @@ class VintedScraper(MarketplaceScraper):
             logging.warning(f"[{self.name}] Invalid value for {key}: {raw_value}. Using default {default}.")
             return default
         return max(min_value, min(parsed, max_value))
+
+    def _extract_item_id(self, item_url: str) -> int | None:
+        match = re.search(r"/items/(?P<id>\d+)", item_url)
+        if not match:
+            return None
+        try:
+            return int(match.group("id"))
+        except ValueError:
+            return None
+
+    def _get_client_for_target_url(self, target_url: str) -> SafeVinted:
+        domain_suffix = self._extract_domain_suffix(urlparse(target_url).netloc)
+        client = self._clients.get(domain_suffix)
+        if client is None:
+            logging.debug(f"[{self.name}] Initializing vinted-api-wrapper client for suffix '{domain_suffix}'")
+            client = SafeVinted(domain=domain_suffix)
+            self._clients[domain_suffix] = client
+        return client
+
+    def _extract_domain_suffix(self, netloc: str) -> str:
+        cleaned = (netloc or "").split(":", 1)[0].lower()
+        if cleaned.startswith("www."):
+            cleaned = cleaned[4:]
+        match = re.search(r"vinted\.([a-z.]+)$", cleaned)
+        if match:
+            suffix = match.group(1)
+            if suffix:
+                return suffix
+        return "pl"
 
