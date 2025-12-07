@@ -1,6 +1,7 @@
 import logging
 import logging_config
 import multiprocessing
+import random
 import time
 from scraper_manager import ScraperOrchestrator
 from database_manager import DatabaseManager
@@ -9,6 +10,14 @@ from notification_manager import Messenger
 # Pause intervals in minutes for different platforms
 VINTED_PAUSE_MINUTES = 3
 OLX_PAUSE_MINUTES = 1
+
+
+def get_varied_sleep_time(base_seconds: float) -> float:
+    """
+    Returns a sleep time with ±10% variation from the base time.
+    """
+    variation = base_seconds * 0.1  # 10% variation
+    return random.uniform(base_seconds - variation, base_seconds + variation)
 
 
 def run_platform_scraper(platform_name: str, pause_minutes: int) -> None:
@@ -35,7 +44,8 @@ def run_platform_scraper(platform_name: str, pause_minutes: int) -> None:
             target_specs = scraper._load_target_urls()
             if not target_specs:
                 logging.info(f"[{platform_name.upper()}] No target URLs configured.")
-                time.sleep(pause_seconds)
+                sleep_time = get_varied_sleep_time(pause_seconds)
+                time.sleep(sleep_time)
                 continue
             
             # Filter target URLs to only those supported by this platform's scraper
@@ -44,7 +54,8 @@ def run_platform_scraper(platform_name: str, pause_minutes: int) -> None:
             
             if not filtered_specs:
                 logging.info(f"[{platform_name.upper()}] No URLs for this platform. Sleeping for {pause_minutes} minutes...")
-                time.sleep(pause_seconds)
+                sleep_time = get_varied_sleep_time(pause_seconds)
+                time.sleep(sleep_time)
                 continue
             
             # Collect new ads for this platform
@@ -88,10 +99,11 @@ def run_platform_scraper(platform_name: str, pause_minutes: int) -> None:
                 processed_urls = {ad.get('url') for ad in new_ads if ad.get('url')}
                 for url in processed_urls:
                     db.add_url(url)
-                logging.info(f"[{platform_name.upper()}] Database updated.")
+                logging.debug(f"[{platform_name.upper()}] Database updated.")
             
             logging.info(f"[{platform_name.upper()}] Cycle completed. Sleeping for {pause_minutes} minutes...")
-            time.sleep(pause_seconds)
+            sleep_time = get_varied_sleep_time(pause_seconds)
+            time.sleep(sleep_time)
             
         except KeyboardInterrupt:
             logging.info(f"[{platform_name.upper()}] Stopping scraper...")
@@ -99,7 +111,8 @@ def run_platform_scraper(platform_name: str, pause_minutes: int) -> None:
         except Exception as e:
             logging.error(f"[{platform_name.upper()}] An unexpected error occurred: {e}")
             logging.info(f"[{platform_name.upper()}] Retrying in {pause_minutes} minutes...")
-            time.sleep(pause_seconds)
+            sleep_time = get_varied_sleep_time(pause_seconds)
+            time.sleep(sleep_time)
 
 
 def main() -> None:

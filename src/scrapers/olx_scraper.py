@@ -18,7 +18,7 @@ from utils import get_header
 class OlxScraper(MarketplaceScraper):
     """Scraper for OLX marketplaces (Ukraine, Poland)."""
 
-    name = "olx"
+    name = "OLX"
     supported_domains = ("www.olx.ua", "www.olx.pl")
 
     def __init__(self, user_agent: str | None = None) -> None:
@@ -46,17 +46,17 @@ class OlxScraper(MarketplaceScraper):
         current_page = 1
         last_page = None
 
-        logging.info(f"[{self.name}] Starting scraping for target URL: {target_url}")
+        logging.debug(f"[{self.name}] Starting scraping for target URL: {target_url}")
         while True:
             logging.debug(f"[{self.name}] --- PAGE {current_page} ---")
-            logging.info(f"[{self.name}] Scraping page: {current_page}")
+            logging.debug(f"[{self.name}] Scraping page: {current_page}")
             page_url = self._build_page_url(target_url, current_page)
             logging.debug(f"[{self.name}] Fetching page URL: {page_url}")
             parsed_content = self._parse_content(page_url)
             last_page = self._get_last_page(parsed_content)
             ads = self._get_ads(parsed_content)
             if ads is None:
-                logging.info("[olx] No ads found on page.")
+                logging.info(f"[{self.name}] No ads found on page.")
                 return listings
             logging.info(f"[{self.name}] Found {len(ads)} ads on page {current_page}")
             page_contains_known = False
@@ -89,10 +89,10 @@ class OlxScraper(MarketplaceScraper):
                 listings.append(ListingCandidate(url=link_href))
                 logging.debug(f"[{self.name}] Ad #{idx} accepted. Total listings so far: {len(listings)}")
             if last_page is None or current_page >= last_page:
-                logging.info(f"[{self.name}] Reached last page or no pagination.")
+                logging.debug(f"[{self.name}] Reached last page or no pagination.")
                 break
             if page_contains_known:
-                logging.info(f"[{self.name}] Encountered known listings; stopping pagination early.")
+                logging.debug(f"[{self.name}] Encountered known listings; stopping pagination early.")
                 break
             current_page += 1
         logging.info(f"Finished scraping. Total unique ads found: {len(listings)}")

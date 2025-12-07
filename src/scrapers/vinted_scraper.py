@@ -17,7 +17,7 @@ from utils import get_header
 class VintedScraper(MarketplaceScraper):
     """HTML-based scraper for Vinted catalog pages."""
 
-    name = "vinted"
+    name = "VINTED"
     max_allowed_page_size = 10
     max_allowed_pages = 2
 
@@ -53,7 +53,7 @@ class VintedScraper(MarketplaceScraper):
         collected: List[ListingCandidate] = []
         seen_urls: set[str] = set()
 
-        logging.info(f"[{self.name}] Starting scrape for {target_url}")
+        logging.debug(f"[{self.name}] Starting scrape for {target_url}")
         while page <= max_pages:
             page_url = self._build_page_url(parsed_target, page, page_size)
             logging.debug(f"[{self.name}] Fetching page {page}: {page_url}")

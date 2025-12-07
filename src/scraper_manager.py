@@ -212,7 +212,7 @@ class ScraperOrchestrator:
         for scraper in self.scrapers:
             if scraper.supports(target_url):
                 return scraper
-        if "vinted" in domain and not any(scraper.name == "vinted" for scraper in self.scrapers):
+        if "vinted" in domain and not any(scraper.name.lower() == "vinted" for scraper in self.scrapers):
             logging.warning(
                 "Vinted URL detected but no Vinted scraper is registered. "
                 "Register the built-in VintedScraper or register a custom scraper."
