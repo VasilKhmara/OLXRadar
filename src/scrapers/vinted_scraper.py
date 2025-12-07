@@ -18,13 +18,13 @@ class VintedScraper(MarketplaceScraper):
     """HTML-based scraper for Vinted catalog pages."""
 
     name = "vinted"
-    max_allowed_page_size = 20
-    max_allowed_pages = 1
+    max_allowed_page_size = 10
+    max_allowed_pages = 2
 
     def __init__(
         self,
-        page_size: int = 20,
-        max_pages: int = 1,
+        page_size: int = 10,
+        max_pages: int = 2,
         user_agent: str | None = None
     ) -> None:
         self.user_agent = user_agent
@@ -199,22 +199,22 @@ class VintedScraper(MarketplaceScraper):
         return None
 
     def _wait_for_rate_limit(self) -> None:
-        """Ensure at least 1 second between requests to avoid rate limiting."""
+        """Ensure at least 4 second between requests to avoid rate limiting."""
         with self._request_lock:
             current_time = time.time()
             time_since_last = current_time - self._last_request_time
-            if time_since_last < 1.0:
-                sleep_time = 1.0 - time_since_last
+            if time_since_last < 4.0:
+                sleep_time = 4.0 - time_since_last
                 logging.debug(f"[{self.name}] Rate limit delay: sleeping {sleep_time:.2f}s")
                 time.sleep(sleep_time)
             self._last_request_time = time.time()
 
     def _fetch_item_soup(self, item_url: str) -> BeautifulSoup | None:
-        # Ensure sequential requests with 1 second delay
+        # Ensure sequential requests with 4 second delay
         self._wait_for_rate_limit()
         
         session = self._get_html_session()
-        delays = (0, 1, 2, 4)
+        delays = (0, 4, 8, 16)
         last_error: Exception | None = None
         for attempt, delay in enumerate(delays, start=1):
             if delay:
