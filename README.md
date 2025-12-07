@@ -70,8 +70,8 @@ Currently supported options (platform-specific):
 - `page_size` (Vinted): overrides the number of items fetched per API page (1–96).
 - `max_pages` (Vinted): caps the number of pages fetched per cycle (1–32).
 
-## Watching Vinted with vinted-api-wrapper
+## Watching Vinted via HTML scraping
 
-Vinted support is powered by [vinted-api-wrapper](https://pypi.org/project/vinted-api-wrapper/). Any URL that contains `vinted` in the domain (e.g. `.fr`, `.com`, `.de`, `.co.uk`) can be dropped into `target_urls.txt` and will automatically be handled by the `VintedScraper`.
+Vinted support is handled by the built-in `VintedScraper`, which pulls catalog pages with `requests`/`BeautifulSoup` and extracts each card URL directly from the HTML. Detail pages are then re-scraped when needed to gather title, price, description and photos.
 
-Behind the scenes the scraper paginates via the official API (up to 96 items per page × 32 pages) so you receive every fresh listing that matches your filters. Because Vinted returns rich metadata in the search response, those ads are sent back to the orchestrator fully populated—no extra per-item requests. The scraper assumes your search is sorted by newest and halts as soon as it sees an older (already processed) item, so each cycle only reviews the fresh tail. You still benefit from the global orchestration pipeline: only unseen listings are processed, they are enriched with detailed data (title, price, seller, images), and the main loop simply gets back a unified list of new items ready for notification delivery.
+The scraper honors `page_size` (per-page card count, 1–96) and `max_pages` (max catalog pages fetched per cycle, 1–32). Because we stop when we hit known listings, each run only explores the freshest tail of a sorted search.
